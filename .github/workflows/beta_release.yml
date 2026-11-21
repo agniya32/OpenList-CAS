@@ -23,7 +23,6 @@ jobs:
           fetch-depth: 0
 
       - name: Create or update ref
-        id: create-or-update-ref
         uses: ovsds/create-or-update-ref-action@f66e3f24fa250e50da7d3e599bae67bc3f749a5e # v1
         with:
           ref: tags/beta
@@ -34,7 +33,6 @@ jobs:
         continue-on-error: true
 
       - name: changelog
-        id: changelog
         run: |
           git tag -l
           npx changelogithub --output CHANGELOG.md
@@ -44,19 +42,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if ! gh release view beta; then
-            gh release create beta --prerelease --notes-file CHANGELOG.md
+            gh release create beta --prerelease --notes-file CHANGELOG.md --title "OpenList-CAS beta"
           else
-            gh release edit beta --prerelease --notes-file CHANGELOG.md
+            gh release edit beta --prerelease --notes-file CHANGELOG.md --title "OpenList-CAS beta"
           fi
           gh release upload beta "CHANGELOG.md" --clobber
-
-      - name: Upload assets to github artifact
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: beta changelog
-          path: ${{ github.workspace }}/CHANGELOG.md
-          compression-level: 0
-          if-no-files-found: error
 
   compile-check:
     name: Compile check (linux/amd64)
@@ -71,11 +61,10 @@ jobs:
           go-version: "1.27.3"
 
       - name: Compile
-        run: go build -o /tmp/openlist-check .
+        run: go build -trimpath -ldflags="-s -w" -tags=jsoniter -o /tmp/openlist-check .
         env:
           CGO_ENABLED: "0"
 
-  # After compile succeeds: build linux amd64 + arm64 and publish to beta Release
   release-amd64-arm64:
     name: Release ${{ matrix.target }}
     needs:
@@ -112,11 +101,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
 
-      - name: Build
+      - name: Build (stripped + static musl)
         uses: OpenListTeam/cgo-actions@d760a8ec1a6be1f8ec181229e11cb2671797f9e0 # v1.3.0
         with:
           targets: ${{ matrix.target }}
-          flags: "-ldflags=-linkmode external -extldflags '-static -fpic'"
+          # -s -w: strip symbol table & DWARF (major size cut)
+          # musl static link flags kept for portable binary
+          flags: "-ldflags=-s -w -linkmode external -extldflags '-static -fpic'"
           static-link-for-musl: true
           musl-target-format: $os-$musl-$arch
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -129,23 +120,44 @@ jobs:
             github.com/OpenListTeam/OpenList/v4/internal/conf.GitCommit=$git_commit
             github.com/OpenListTeam/OpenList/v4/internal/conf.Version=$tag
             github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=rolling
+        env:
+          GOFLAGS: "-trimpath -tags=jsoniter"
 
-      - name: Verify static binary
+      - name: Verify static binary & size
         run: |
           set -e
           BIN=build/openlist
           if [ ! -f "$BIN" ]; then
-            ls -la build/ || true
-            echo "binary missing"
-            exit 1
+            echo "binary missing"; ls -la build/ || true; exit 1
           fi
           if readelf -l "$BIN" | grep -q "Requesting program interpreter"; then
             echo "Dynamic binary detected: $BIN"
             readelf -l "$BIN" | grep "Requesting program interpreter" || true
             exit 1
           fi
-          file "$BIN"
+          echo "=== before strip/upx ==="
           ls -lh "$BIN"
+          file "$BIN"
+
+      - name: Extra strip (safe no-op if already stripped)
+        run: |
+          set -e
+          BIN=build/openlist
+          strip --strip-all "$BIN" 2>/dev/null || strip -s "$BIN" 2>/dev/null || true
+          echo "=== after strip ==="
+          ls -lh "$BIN"
+
+      - name: UPX compress
+        run: |
+          set -e
+          BIN=build/openlist
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq upx-ucl || sudo apt-get install -y -qq upx
+          # -9: best compression; --lzma often smaller for Go binaries
+          upx -9 --lzma "$BIN" || upx -9 "$BIN"
+          echo "=== after UPX ==="
+          ls -lh "$BIN"
+          file "$BIN"
 
       - name: Package
         run: |
@@ -153,6 +165,7 @@ jobs:
           mkdir -p dist
           tar -czf "dist/${{ matrix.asset }}" -C build openlist
           (cd dist && sha256sum "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256")
+          echo "=== package ==="
           ls -lh dist/
 
       - name: Upload to beta Release
@@ -168,87 +181,3 @@ jobs:
           path: dist/*
           compression-level: 0
           if-no-files-found: error
-
-  # Full multi-platform matrix only on manual dispatch
-  release-full:
-    if: github.event_name == 'workflow_dispatch'
-    needs:
-      - changelog
-      - compile-check
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        include:
-          - target: windows-amd64
-          - target: windows-arm64
-          - target: darwin-amd64
-          - target: darwin-arm64
-          - target: linux-amd64
-          - target: linux-arm64
-    name: Full Release ${{ matrix.target }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0
-
-      - name: Setup Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
-        with:
-          go-version: "1.27.3"
-
-      - name: Free disk space
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
-
-      - name: Setup web
-        run: bash build.sh dev web
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
-
-      - name: Build
-        uses: OpenListTeam/cgo-actions@d760a8ec1a6be1f8ec181229e11cb2671797f9e0 # v1.3.0
-        with:
-          targets: ${{ matrix.target }}
-          flags: "-ldflags="
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          out-dir: build
-          output: openlist$ext
-          x-flags: |
-            github.com/OpenListTeam/OpenList/v4/internal/conf.BuiltAt=$built_at
-            github.com/OpenListTeam/OpenList/v4/internal/conf.GitAuthor=The OpenList Projects Contributors <noreply@oplist.org>
-            github.com/OpenListTeam/OpenList/v4/internal/conf.GitCommit=$git_commit
-            github.com/OpenListTeam/OpenList/v4/internal/conf.Version=$tag
-            github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=rolling
-
-      - name: Package
-        run: |
-          set -e
-          mkdir -p dist
-          cd build
-          if [ -f openlist.exe ]; then
-            zip -9 "../dist/openlist-${{ matrix.target }}.zip" openlist.exe
-          else
-            tar -czf "../dist/openlist-${{ matrix.target }}.tar.gz" openlist
-          fi
-          cd ..
-          (cd dist && sha256sum * > checksums.txt || true)
-          ls -lh dist/
-
-      - name: Upload to beta Release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          for f in dist/*; do
-            gh release upload beta "$f" --clobber
-          done
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: openlist-${{ matrix.target }}
-          path: dist/*
-          compression-level: 0
