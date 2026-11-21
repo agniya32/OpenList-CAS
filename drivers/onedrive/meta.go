@@ -18,6 +18,7 @@ type Addition struct {
 	SiteId             string `json:"site_id"`
 	ChunkSize          int64  `json:"chunk_size" type:"number" default:"5"`
 	CustomHost         string `json:"custom_host" help:"Custom host for onedrive download link"`
+	SnippetProxy       string `json:"snippet_proxy" help:"Cloudflare Snippet base URL for short-link 302, e.g. https://dl.oooo.ddns-ip.net (path /d/{base64url})"`
 	DisableDiskUsage   bool   `json:"disable_disk_usage" default:"false"`
 	EnableDirectUpload bool   `json:"enable_direct_upload" default:"false" help:"Enable direct upload from client to OneDrive"`
 }
