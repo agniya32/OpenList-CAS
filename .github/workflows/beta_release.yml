@@ -33,7 +33,7 @@ jobs:
         run: git tag -d beta
         continue-on-error: true
 
-      - name: changelog # or changelogithub@0.12 if ensure the stable result
+      - name: changelog
         id: changelog
         run: |
           git tag -l
@@ -56,49 +56,72 @@ jobs:
           name: beta changelog
           path: ${{ github.workspace }}/CHANGELOG.md
           compression-level: 0
-          if-no-files-found: error # 'warn' or 'ignore' are also available, defaults to `warn`
+          if-no-files-found: error
 
+  # Lightweight compile check on every push (avoids multi-arch matrix disk exhaustion)
+  compile-check:
+    name: Compile check (linux/amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: "1.27.3"
+
+      - name: Compile
+        run: |
+          go build -o /tmp/openlist-check .
+        env:
+          CGO_ENABLED: "0"
+
+  # Full multi-platform beta builds only on manual dispatch
   release:
+    if: github.event_name == 'workflow_dispatch'
     needs:
       - changelog
     strategy:
+      fail-fast: false
+      max-parallel: 2
       matrix:
         include:
-          - target: "!(*musl*|*windows-arm64*|*windows7-*|*android*|*freebsd*)" # xgo and loongarch (exclude mips64le)
+          - target: "!(*musl*|*windows-arm64*|*windows7-*|*android*|*freebsd*)"
             hash: "md5"
             flags: ""
             goflags: ""
-          - target: "linux-(mips|mips64|mipsle|mips64le|loong64)-musl*" # musl-compat-family
+          - target: "linux-(mips|mips64|mipsle|mips64le|loong64)-musl*"
             hash: "md5-linux-musl-mips"
             flags: "-ldflags=-linkmode external -extldflags '-static -fpic'"
             goflags: ""
             musl_static: "true"
-          - target: "linux-!(arm*|mips|mips64|mipsle|mips64le|loong64)-musl*" # musl-not-arm (exclude compat-family)
+          - target: "linux-!(arm*|mips|mips64|mipsle|mips64le|loong64)-musl*"
             hash: "md5-linux-musl"
             flags: "-ldflags=-linkmode external -extldflags '-static -fpic'"
             goflags: ""
             musl_static: "true"
-          - target: "linux-arm*-musl*" #musl-arm
+          - target: "linux-arm*-musl*"
             hash: "md5-linux-musl-arm"
             flags: "-ldflags=-linkmode external -extldflags '-static -fpic'"
             goflags: ""
             musl_static: "true"
-          - target: "windows-arm64" #win-arm64
+          - target: "windows-arm64"
             hash: "md5-windows-arm64"
             flags: ""
             goflags: ""
             musl_static: "false"
-          - target: "windows7-*" #win7
+          - target: "windows7-*"
             hash: "md5-windows7"
             flags: ""
             goflags: "-tags=sqlite_cgo_compat"
             musl_static: "false"
-          - target: "android-*" #android
+          - target: "android-*"
             hash: "md5-android"
             flags: ""
             goflags: ""
             musl_static: "false"
-          - target: "freebsd-*" #freebsd
+          - target: "freebsd-*"
             hash: "md5-freebsd"
             flags: ""
             goflags: ""
@@ -116,6 +139,11 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: "1.27.3"
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h
 
       - name: Setup web
         run: bash build.sh dev web
@@ -190,4 +218,4 @@ jobs:
           name: beta builds for ${{ env.cleaned_target }}
           path: ${{ github.workspace }}/build/compress/*
           compression-level: 0
-          if-no-files-found: error # 'warn' or 'ignore' are also available, defaults to `warn`
+          if-no-files-found: error
