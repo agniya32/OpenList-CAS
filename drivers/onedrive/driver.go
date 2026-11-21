@@ -2,10 +2,12 @@ package onedrive
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"net/url"
 	"path"
+	"strings"
 	"sync"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -124,6 +126,10 @@ func (d *Onedrive) Link(ctx context.Context, file model.Obj, args model.LinkArgs
 		}
 		_u.Host = d.CustomHost
 		u = _u.String()
+	}
+	// Cloudflare Snippet short-link: https://dl.example.com/d/{base64url(url)}
+	if proxy := strings.TrimRight(strings.TrimSpace(d.SnippetProxy), "/"); proxy != "" {
+		u = proxy + "/d/" + base64.RawURLEncoding.EncodeToString([]byte(u))
 	}
 	return &model.Link{
 		URL: u,
