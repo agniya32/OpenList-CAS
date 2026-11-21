@@ -58,7 +58,6 @@ jobs:
           compression-level: 0
           if-no-files-found: error
 
-  # Lightweight compile check on every push (avoids multi-arch matrix disk exhaustion)
   compile-check:
     name: Compile check (linux/amd64)
     runs-on: ubuntu-latest
@@ -72,62 +71,24 @@ jobs:
           go-version: "1.27.3"
 
       - name: Compile
-        run: |
-          go build -o /tmp/openlist-check .
+        run: go build -o /tmp/openlist-check .
         env:
           CGO_ENABLED: "0"
 
-  # Full multi-platform beta builds only on manual dispatch
-  release:
-    if: github.event_name == 'workflow_dispatch'
+  # After compile succeeds: build linux amd64 + arm64 and publish to beta Release
+  release-amd64-arm64:
+    name: Release ${{ matrix.target }}
     needs:
       - changelog
+      - compile-check
     strategy:
       fail-fast: false
-      max-parallel: 2
       matrix:
         include:
-          - target: "!(*musl*|*windows-arm64*|*windows7-*|*android*|*freebsd*)"
-            hash: "md5"
-            flags: ""
-            goflags: ""
-          - target: "linux-(mips|mips64|mipsle|mips64le|loong64)-musl*"
-            hash: "md5-linux-musl-mips"
-            flags: "-ldflags=-linkmode external -extldflags '-static -fpic'"
-            goflags: ""
-            musl_static: "true"
-          - target: "linux-!(arm*|mips|mips64|mipsle|mips64le|loong64)-musl*"
-            hash: "md5-linux-musl"
-            flags: "-ldflags=-linkmode external -extldflags '-static -fpic'"
-            goflags: ""
-            musl_static: "true"
-          - target: "linux-arm*-musl*"
-            hash: "md5-linux-musl-arm"
-            flags: "-ldflags=-linkmode external -extldflags '-static -fpic'"
-            goflags: ""
-            musl_static: "true"
-          - target: "windows-arm64"
-            hash: "md5-windows-arm64"
-            flags: ""
-            goflags: ""
-            musl_static: "false"
-          - target: "windows7-*"
-            hash: "md5-windows7"
-            flags: ""
-            goflags: "-tags=sqlite_cgo_compat"
-            musl_static: "false"
-          - target: "android-*"
-            hash: "md5-android"
-            flags: ""
-            goflags: ""
-            musl_static: "false"
-          - target: "freebsd-*"
-            hash: "md5-freebsd"
-            flags: ""
-            goflags: ""
-            musl_static: "false"
-
-    name: Beta Release
+          - target: linux-amd64-musl
+            asset: openlist-linux-amd64.tar.gz
+          - target: linux-arm64-musl
+            asset: openlist-linux-arm64.tar.gz
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -155,12 +116,12 @@ jobs:
         uses: OpenListTeam/cgo-actions@d760a8ec1a6be1f8ec181229e11cb2671797f9e0 # v1.3.0
         with:
           targets: ${{ matrix.target }}
-          flags: ${{ matrix.flags || '-ldflags=' }}
+          flags: "-ldflags=-linkmode external -extldflags '-static -fpic'"
           static-link-for-musl: true
           musl-target-format: $os-$musl-$arch
           github-token: ${{ secrets.GITHUB_TOKEN }}
           out-dir: build
-          output: openlist-$target$ext
+          output: openlist
           musl-base-url: "https://github.com/OpenListTeam/musl-compilers/releases/latest/download/"
           x-flags: |
             github.com/OpenListTeam/OpenList/v4/internal/conf.BuiltAt=$built_at
@@ -168,54 +129,126 @@ jobs:
             github.com/OpenListTeam/OpenList/v4/internal/conf.GitCommit=$git_commit
             github.com/OpenListTeam/OpenList/v4/internal/conf.Version=$tag
             github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=rolling
-        env:
-          GOFLAGS: ${{ matrix.goflags }}
 
-      - name: Verify musl binaries are static
-        if: matrix.musl_static == 'true'
+      - name: Verify static binary
         run: |
           set -e
-          shopt -s nullglob
-          files=(build/openlist-*-musl-*)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No musl binaries found"
+          BIN=build/openlist
+          if [ ! -f "$BIN" ]; then
+            ls -la build/ || true
+            echo "binary missing"
             exit 1
           fi
-          for f in "${files[@]}"; do
-            if readelf -l "$f" | grep -q "Requesting program interpreter"; then
-              echo "Dynamic binary detected: $f"
-              readelf -l "$f" | grep "Requesting program interpreter" || true
-              exit 1
-            fi
-          done
+          if readelf -l "$BIN" | grep -q "Requesting program interpreter"; then
+            echo "Dynamic binary detected: $BIN"
+            readelf -l "$BIN" | grep "Requesting program interpreter" || true
+            exit 1
+          fi
+          file "$BIN"
+          ls -lh "$BIN"
 
-      - name: Compress
+      - name: Package
         run: |
-          bash build.sh zip ${{ matrix.hash }}
+          set -e
+          mkdir -p dist
+          tar -czf "dist/${{ matrix.asset }}" -C build openlist
+          (cd dist && sha256sum "${{ matrix.asset }}" > "${{ matrix.asset }}.sha256")
+          ls -lh dist/
+
+      - name: Upload to beta Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload assets to beta release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          for file in build/compress/*; do
-            gh release upload beta "$file" --clobber
-          done
+          gh release upload beta "dist/${{ matrix.asset }}" "dist/${{ matrix.asset }}.sha256" --clobber
 
-      - name: Clean illegal characters from matrix.target
-        id: clean_target_name
-        run: |
-          ILLEGAL_CHARS_REGEX='[":<>|*?\\/\r\n]'
-          CLEANED_TARGET=$(echo "${{ matrix.target }}" | sed -E "s/$ILLEGAL_CHARS_REGEX//g")
-          echo "Original target: ${{ matrix.target }}"
-          echo "Cleaned target: $CLEANED_TARGET"
-          echo "cleaned_target=$CLEANED_TARGET" >> $GITHUB_ENV
-
-      - name: Upload assets to github artifact
+      - name: Upload artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: beta builds for ${{ env.cleaned_target }}
-          path: ${{ github.workspace }}/build/compress/*
+          name: ${{ matrix.asset }}
+          path: dist/*
           compression-level: 0
           if-no-files-found: error
+
+  # Full multi-platform matrix only on manual dispatch
+  release-full:
+    if: github.event_name == 'workflow_dispatch'
+    needs:
+      - changelog
+      - compile-check
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - target: windows-amd64
+          - target: windows-arm64
+          - target: darwin-amd64
+          - target: darwin-arm64
+          - target: linux-amd64
+          - target: linux-arm64
+    name: Full Release ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: "1.27.3"
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+
+      - name: Setup web
+        run: bash build.sh dev web
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
+
+      - name: Build
+        uses: OpenListTeam/cgo-actions@d760a8ec1a6be1f8ec181229e11cb2671797f9e0 # v1.3.0
+        with:
+          targets: ${{ matrix.target }}
+          flags: "-ldflags="
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          out-dir: build
+          output: openlist$ext
+          x-flags: |
+            github.com/OpenListTeam/OpenList/v4/internal/conf.BuiltAt=$built_at
+            github.com/OpenListTeam/OpenList/v4/internal/conf.GitAuthor=The OpenList Projects Contributors <noreply@oplist.org>
+            github.com/OpenListTeam/OpenList/v4/internal/conf.GitCommit=$git_commit
+            github.com/OpenListTeam/OpenList/v4/internal/conf.Version=$tag
+            github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=rolling
+
+      - name: Package
+        run: |
+          set -e
+          mkdir -p dist
+          cd build
+          if [ -f openlist.exe ]; then
+            zip -9 "../dist/openlist-${{ matrix.target }}.zip" openlist.exe
+          else
+            tar -czf "../dist/openlist-${{ matrix.target }}.tar.gz" openlist
+          fi
+          cd ..
+          (cd dist && sha256sum * > checksums.txt || true)
+          ls -lh dist/
+
+      - name: Upload to beta Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for f in dist/*; do
+            gh release upload beta "$f" --clobber
+          done
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: openlist-${{ matrix.target }}
+          path: dist/*
+          compression-level: 0
