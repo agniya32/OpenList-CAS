@@ -53,7 +53,7 @@ func (y *Cloud189PC) uploadCAS(ctx context.Context, dstDir model.Obj, info *casU
 		Reader:   bytes.NewReader(content),
 		Mimetype: "text/plain",
 	}
-	uploadedCASObj, _, err := y.uploadFile(ctx, dstDir, casStream, func(float64) {})
+	uploadedCASObj, err := y.StreamUpload(ctx, dstDir, casStream, func(float64) {}, y.isFamily(), true)
 	if err != nil {
 		return nil, err
 	}

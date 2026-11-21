@@ -48,12 +48,12 @@ func (y *Cloud189PC) restoreCAS(ctx context.Context, dstDir model.Obj, info *cas
 		if err != nil {
 			return nil, err
 		}
-		if err = y.SaveFamilyFileToPersonCloud(ctx, y.FamilyID, obj, dstDir, true, targetName); err != nil {
+		if err = y.SaveFamilyFileToPersonCloud(ctx, y.FamilyID, obj, dstDir, true); err != nil {
 			y.queueFamilyTransferCleanupObj(obj)
 			return nil, err
 		}
 		y.queueFamilyTransferCleanupObj(obj)
-		file, _, err := y.waitFamilyTransferFile(ctx, dstDir, targetName, targetName)
+		file, err := y.waitFamilyTransferFile(ctx, dstDir, obj.GetName(), targetName)
 		return file, err
 	}
 	return y.restoreCASDirect(ctx, dstDir, &restoreInfo, y.isFamily(), true)
@@ -100,4 +100,41 @@ func (y *Cloud189PC) restoreCASDirect(ctx context.Context, dstDir model.Obj, inf
 		return nil, err
 	}
 	return resp.toFile(), nil
+}
+
+
+// ensureFamilyTransferFolder ensures the family transfer folder is ready.
+func (y *Cloud189PC) ensureFamilyTransferFolder(ctx context.Context) error {
+	if y.familyTransferFolder != nil {
+		return nil
+	}
+	return y.createFamilyTransferFolder()
+}
+
+// waitFamilyTransferFile waits for a transferred file to appear in the personal cloud
+// and optionally renames it to targetName.
+func (y *Cloud189PC) waitFamilyTransferFile(ctx context.Context, dstDir model.Obj, searchName, targetName string) (model.Obj, error) {
+	var lastErr error
+	for i := 0; i < 30; i++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		file, err := y.findFileByName(ctx, searchName, dstDir.GetID(), false)
+		if err == nil && file != nil {
+			if targetName != "" && targetName != searchName {
+				renamed, rerr := y.Rename(ctx, file, targetName)
+				if rerr != nil {
+					return file, nil
+				}
+				return renamed, nil
+			}
+			return file, nil
+		}
+		lastErr = err
+		time.Sleep(time.Second)
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("wait family transfer file %q: %w", searchName, lastErr)
+	}
+	return nil, fmt.Errorf("wait family transfer file %q: timeout", searchName)
 }
