@@ -47,7 +47,7 @@ func (y *Cloud189PC) manualRefreshAutoRestorePath(args model.ListArgs) (string, 
 	if !args.Refresh || args.ReqPath == "" || !y.AutoRestoreExistingCAS || strings.TrimSpace(y.AutoRestoreExistingCASPaths) == "" {
 		return "", false
 	}
-	dirPath := strings.TrimSpace(args.ActualPath)
+	dirPath := strings.TrimSpace(args.ReqPath)
 	if dirPath == "" {
 		return "", false
 	}

@@ -119,7 +119,7 @@ func headerToMap(header http.Header) map[string]string {
 	return headers
 }
 
-func ComputeSliceMD5sFromReader(reader io.Reader, sliceSize int64) (string, []string, error) {
+func computeSliceMD5sFromReaderCAS(reader io.Reader, sliceSize int64) (string, []string, error) {
 	if sliceSize <= 0 {
 		sliceSize = casmeta.DefaultSliceSize
 	}

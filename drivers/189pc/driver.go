@@ -1,6 +1,7 @@
 package _189pc
 
 import (
+	"sync"
 	"context"
 	"fmt"
 	"net/http"
@@ -34,6 +35,15 @@ type Cloud189PC struct {
 
 	familyTransferFolder    *Cloud189Folder
 	cleanFamilyTransferFile func()
+
+	// OpenList-CAS auto-restore / cleanup state
+	autoRestoreInFlight sync.Map
+	autoRestoreMu       sync.Mutex
+	cleanupMu           sync.Mutex
+	cleanupActive       int
+	cleanupFamilyObjs   []model.Obj
+	cleanupTimer        *time.Timer
+	debounceClean       func()
 
 	storageConfig driver.Config
 	ref           *Cloud189PC
