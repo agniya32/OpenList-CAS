@@ -23,18 +23,17 @@ func initAdmin() {
 	_, err := op.GetAdmin()
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			// 系统尚未初始化：仅在开发模式或显式配置 OPENLIST_ADMIN_PASSWORD 时
-			// 自动创建管理员；否则交由 Web 安装向导（POST /api/public/init/setup）完成。
-			adminPassword := "admin"
+			// OpenList-CAS: 首次启动自动创建管理员，密码随机生成并打印到控制台。
+			// 优先级：OPENLIST_ADMIN_PASSWORD 环境变量 > --dev 模式固定 "admin" > 随机密码。
+			adminPassword := random.String(8)
 			envpass := os.Getenv("OPENLIST_ADMIN_PASSWORD")
 			if flags.Dev {
 				adminPassword = "admin"
 			} else if len(envpass) > 0 {
 				adminPassword = envpass
-			} else {
-				// 未初始化：不自动创建管理员，等待 Web 安装向导。
-				return
 			}
+			// 不再 return，始终创建管理员（CAS 分支期望开箱即用）
+
 			salt := random.String(16)
 			admin := &model.User{
 				Username: "admin",
