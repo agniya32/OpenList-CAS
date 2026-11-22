@@ -1,8 +1,10 @@
 name: Sync to Gitee
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
-
 
 jobs:
   sync:
@@ -22,7 +24,6 @@ jobs:
           ssh-keyscan gitee.com >> ~/.ssh/known_hosts
 
       - name: Create single commit and push
-        continue-on-error: true
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
