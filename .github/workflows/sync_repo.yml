@@ -1,38 +1,61 @@
 name: Sync to Gitee
 
+# 默认仅手动触发，避免 push 时因未配置 Gitee 密钥而失败。
+# 若已配置 secrets.GITEE_SSH_PRIVATE_KEY 与 vars.GITEE_REPO_URL，
+# 可取消下方 push 注释以恢复「推送 main 自动镜像」。
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+  # push:
+  #   branches: [main]
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     name: Sync GitHub to Gitee
     steps:
+      - name: Check Gitee configuration
+        id: check
+        env:
+          GITEE_KEY: ${{ secrets.GITEE_SSH_PRIVATE_KEY }}
+          GITEE_URL: ${{ vars.GITEE_REPO_URL }}
+        run: |
+          if [ -z "$GITEE_KEY" ] || [ -z "$GITEE_URL" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::跳过 Gitee 同步：请配置 secrets.GITEE_SSH_PRIVATE_KEY 与 vars.GITEE_REPO_URL 后再手动运行。"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Gitee 配置已就绪，开始同步。"
+          fi
+
       - name: Checkout
+        if: steps.check.outputs.skip != 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
       - name: Setup SSH
+        if: steps.check.outputs.skip != 'true'
+        env:
+          GITEE_KEY: ${{ secrets.GITEE_SSH_PRIVATE_KEY }}
         run: |
           mkdir -p ~/.ssh
-          echo "${{ secrets.GITEE_SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          printf '%s\n' "$GITEE_KEY" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan gitee.com >> ~/.ssh/known_hosts
 
       - name: Create single commit and push
+        if: steps.check.outputs.skip != 'true'
+        env:
+          GITEE_URL: ${{ vars.GITEE_REPO_URL }}
         run: |
+          set -e
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          
-          # Create a new branch
+
           git checkout --orphan new-main
           git add .
-          git commit -m "Sync from GitHub: $(date)"
+          git commit -m "Sync from GitHub: $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
 
-          # Add Gitee remote and force push
-          git remote add gitee ${{ vars.GITEE_REPO_URL }}
+          git remote add gitee "$GITEE_URL"
           git push --force gitee new-main:main
+          echo "已推送到 Gitee: $GITEE_URL"
