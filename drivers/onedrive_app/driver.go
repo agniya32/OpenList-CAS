@@ -9,6 +9,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
@@ -109,7 +110,14 @@ func (d *OnedriveAPP) List(ctx context.Context, dir model.Obj, args model.ListAr
 }
 
 func (d *OnedriveAPP) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
-	f, err := d.GetFile(file.GetPath())
+	// Prefer Graph item id over path to avoid Unicode path mismatches (e.g. 鹰 vs 鷹).
+	var f *File
+	var err error
+	if id := file.GetID(); id != "" && id != "root" {
+		f, err = d.GetFileById(id)
+	} else {
+		f, err = d.GetFile(file.GetPath())
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -117,8 +125,11 @@ func (d *OnedriveAPP) Link(ctx context.Context, file model.Obj, args model.LinkA
 		return nil, errs.NotFile
 	}
 	u := f.Url
+	if u == "" {
+		return nil, fmt.Errorf("onedrive_app: empty download url for %s", file.GetName())
+	}
 	if d.CustomHost != "" {
-		_u, err := url.Parse(f.Url)
+		_u, err := url.Parse(u)
 		if err != nil {
 			return nil, err
 		}
@@ -129,8 +140,11 @@ func (d *OnedriveAPP) Link(ctx context.Context, file model.Obj, args model.LinkA
 	if proxy := strings.TrimRight(strings.TrimSpace(d.SnippetProxy), "/"); proxy != "" {
 		u = proxy + "/d/" + base64.RawURLEncoding.EncodeToString([]byte(u))
 	}
+	exp := 50 * time.Minute
 	return &model.Link{
-		URL: u,
+		URL:           u,
+		Expiration:    &exp,
+		ContentLength: f.Size,
 	}, nil
 }
 
