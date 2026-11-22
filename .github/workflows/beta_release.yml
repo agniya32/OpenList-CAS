@@ -174,10 +174,3 @@ jobs:
         run: |
           gh release upload beta "dist/${{ matrix.asset }}" "dist/${{ matrix.asset }}.sha256" --clobber
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: ${{ matrix.asset }}
-          path: dist/*
-          compression-level: 0
-          if-no-files-found: error
