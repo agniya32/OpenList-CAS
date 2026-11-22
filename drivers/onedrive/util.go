@@ -186,6 +186,20 @@ func (d *Onedrive) GetFile(path string) (*File, error) {
 	return &file, err
 }
 
+// GetFileById fetches a drive item by Graph item id (more reliable than path for Unicode names).
+func (d *Onedrive) GetFileById(id string) (*File, error) {
+	host, _ := onedriveHostMap[d.Region]
+	var u string
+	if d.IsSharepoint {
+		u = fmt.Sprintf("%s/v1.0/sites/%s/drive/items/%s", host.Api, d.SiteId, id)
+	} else {
+		u = fmt.Sprintf("%s/v1.0/me/drive/items/%s", host.Api, id)
+	}
+	var file File
+	_, err := d.Request(u, http.MethodGet, nil, &file)
+	return &file, err
+}
+
 func (d *Onedrive) upSmall(ctx context.Context, dstDir model.Obj, stream model.FileStreamer) error {
 	filepath := stdpath.Join(dstDir.GetPath(), stream.GetName())
 	// 1. upload new file
