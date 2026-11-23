@@ -23,6 +23,33 @@ const (
 	initialSizeThreshold int64 = 4 << 30 // 4GB
 )
 
+// valuedCookie normalizes cookie input (from bclone/rclone terabox backend).
+// Accepts a full Cookie header or a bare ndus token.
+func valuedCookie(cookie string) string {
+	cookie = strings.TrimSpace(cookie)
+	if len(cookie) > 2 && cookie[0] == '"' && cookie[len(cookie)-1] == '"' {
+		cookie = cookie[1 : len(cookie)-1]
+	}
+	parts := strings.Split(cookie, ";")
+	if len(parts) == 1 && !strings.Contains(parts[0], "=") && parts[0] != "" {
+		return fmt.Sprintf("ndus=%s; lang=en", parts[0])
+	}
+	return cookie
+}
+
+const teraboxUA = "terabox;1.37.0.7;PC;PC-Windows;10.0.22631;WindowsTeraBox"
+
+func teraboxLinkHeader(cookie string) http.Header {
+	h := http.Header{}
+	h.Set("User-Agent", teraboxUA)
+	h.Set("Referer", "https://www.terabox.com/")
+	if cookie != "" {
+		h.Set("Cookie", cookie)
+	}
+	return h
+}
+
+
 func getStrBetween(raw, start, end string) string {
 	regexPattern := fmt.Sprintf(`%s(.*?)%s`, regexp.QuoteMeta(start), regexp.QuoteMeta(end))
 	regex := regexp.MustCompile(regexPattern)
@@ -40,7 +67,7 @@ func (d *Terabox) resetJsToken() error {
 		"Cookie":           d.Cookie,
 		"Accept":           "application/json, text/plain, */*",
 		"Referer":          d.base_url,
-		"User-Agent":       "terabox;1.37.0.7;PC;PC-Windows;10.0.22631;WindowsTeraBox",
+		"User-Agent":       teraboxUA,
 		"X-Requested-With": "XMLHttpRequest",
 	}).Get(u)
 	if err != nil {
@@ -61,7 +88,7 @@ func (d *Terabox) request(rurl string, method string, callback base.ReqCallback,
 		"Cookie":           d.Cookie,
 		"Accept":           "application/json, text/plain, */*",
 		"Referer":          d.base_url,
-		"User-Agent":       "terabox;1.37.0.7;PC;PC-Windows;10.0.22631;WindowsTeraBox",
+		"User-Agent":       teraboxUA,
 		"X-Requested-With": "XMLHttpRequest",
 	})
 	req.SetQueryParams(map[string]string{
@@ -235,54 +262,67 @@ func (d *Terabox) linkOfficial(file model.Obj, args model.LinkArgs) (*model.Link
 	if err != nil {
 		return nil, err
 	}
+	// Match bclone apiDownloadLink (need_speed improves CDN selection for some accounts).
 	params := map[string]string{
-		"type":      "dlink",
-		"fidlist":   fmt.Sprintf("[%s]", file.GetID()),
-		"sign":      signString,
-		"vip":       "2",
-		"timestamp": strconv.FormatInt(time.Now().Unix(), 10),
+		"type":       "dlink",
+		"fidlist":    fmt.Sprintf("[%s]", file.GetID()),
+		"sign":       signString,
+		"vip":        "2",
+		"timestamp":  strconv.FormatInt(time.Now().Unix(), 10),
+		"need_speed": "1",
 	}
 	_, err = d.get("/api/download", params, &resp)
 	if err != nil {
 		return nil, err
 	}
-
-	if len(resp.Dlink) == 0 {
+	if resp.Errno != 0 {
+		return nil, fmt.Errorf("terabox download errno %d for fid %s", resp.Errno, file.GetID())
+	}
+	if len(resp.Dlink) == 0 || resp.Dlink[0].Dlink == "" {
 		return nil, fmt.Errorf("fid %s no dlink found, errno: %d", file.GetID(), resp.Errno)
 	}
 
-	res, err := base.NoRedirectClient.R().SetHeader("Cookie", d.Cookie).SetHeader("User-Agent", "terabox;1.37.0.7;PC;PC-Windows;10.0.22631;WindowsTeraBox").Get(resp.Dlink[0].Dlink)
+	dlink := resp.Dlink[0].Dlink
+	res, err := base.NoRedirectClient.R().
+		SetHeader("Cookie", d.Cookie).
+		SetHeader("User-Agent", teraboxUA).
+		SetHeader("Referer", d.base_url+"/").
+		Get(dlink)
 	if err != nil {
 		return nil, err
 	}
-	u := res.Header().Get("location")
+	u := res.Header().Get("Location")
 	if u == "" {
-		u = resp.Dlink[0].Dlink
+		u = dlink
+	} else if strings.HasPrefix(u, "/") {
+		u = strings.TrimRight(d.base_url, "/") + u
 	}
 	return &model.Link{
-		URL: d.wrapSnippetProxy(u),
-		Header: http.Header{
-			"User-Agent": []string{"terabox;1.37.0.7;PC;PC-Windows;10.0.22631;WindowsTeraBox"},
-		},
+		URL:    d.wrapSnippetProxy(u),
+		Header: teraboxLinkHeader(d.Cookie),
 	}, nil
 }
 
 func (d *Terabox) linkCrack(file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	var resp DownloadResp2
+	// Align with bclone apiItemInfo(path, downloadLink=true).
 	param := map[string]string{
 		"target": fmt.Sprintf("[\"%s\"]", file.GetPath()),
 		"dlink":  "1",
-		"origin": "dlna",
 	}
 	_, err := d.get("/api/filemetas", param, &resp)
 	if err != nil {
 		return nil, err
 	}
+	if resp.Errno != 0 {
+		return nil, fmt.Errorf("terabox filemetas errno %d for path %s", resp.Errno, file.GetPath())
+	}
+	if len(resp.Info) == 0 || resp.Info[0].Dlink == "" {
+		return nil, fmt.Errorf("terabox filemetas empty dlink for path %s", file.GetPath())
+	}
 	return &model.Link{
-		URL: d.wrapSnippetProxy(resp.Info[0].Dlink),
-		Header: http.Header{
-			"User-Agent": []string{"terabox;1.37.0.7;PC;PC-Windows;10.0.22631;WindowsTeraBox"},
-		},
+		URL:    d.wrapSnippetProxy(resp.Info[0].Dlink),
+		Header: teraboxLinkHeader(d.Cookie),
 	}, nil
 }
 
