@@ -218,6 +218,17 @@ func (d *Terabox) genSign() (string, error) {
 	return sign(resp.Data.Sign3, resp.Data.Sign1), nil
 }
 
+
+// wrapSnippetProxy optionally rewrites the final download URL through Cloudflare Snippet:
+// {snippet_proxy}/d/{base64url(url)}
+func (d *Terabox) wrapSnippetProxy(u string) string {
+	proxy := strings.TrimRight(strings.TrimSpace(d.SnippetProxy), "/")
+	if proxy == "" || u == "" {
+		return u
+	}
+	return proxy + "/d/" + base64.RawURLEncoding.EncodeToString([]byte(u))
+}
+
 func (d *Terabox) linkOfficial(file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	var resp DownloadResp
 	signString, err := d.genSign()
@@ -245,8 +256,11 @@ func (d *Terabox) linkOfficial(file model.Obj, args model.LinkArgs) (*model.Link
 		return nil, err
 	}
 	u := res.Header().Get("location")
+	if u == "" {
+		u = resp.Dlink[0].Dlink
+	}
 	return &model.Link{
-		URL: u,
+		URL: d.wrapSnippetProxy(u),
 		Header: http.Header{
 			"User-Agent": []string{"terabox;1.37.0.7;PC;PC-Windows;10.0.22631;WindowsTeraBox"},
 		},
@@ -265,7 +279,7 @@ func (d *Terabox) linkCrack(file model.Obj, args model.LinkArgs) (*model.Link, e
 		return nil, err
 	}
 	return &model.Link{
-		URL: resp.Info[0].Dlink,
+		URL: d.wrapSnippetProxy(resp.Info[0].Dlink),
 		Header: http.Header{
 			"User-Agent": []string{"terabox;1.37.0.7;PC;PC-Windows;10.0.22631;WindowsTeraBox"},
 		},
