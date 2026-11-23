@@ -36,6 +36,8 @@ func (d *Terabox) GetAddition() driver.Additional {
 }
 
 func (d *Terabox) Init(ctx context.Context) error {
+	// Align with bclone: accept full cookie or bare ndus token.
+	d.Cookie = valuedCookie(d.Cookie)
 	var resp CheckLoginResp
 	d.base_url = "https://www.terabox.com"
 	d.url_domain_prefix = "jp"
@@ -47,9 +49,11 @@ func (d *Terabox) Init(ctx context.Context) error {
 		if resp.Errno == 9000 {
 			return fmt.Errorf("terabox is not yet available in this area")
 		}
-		return fmt.Errorf("failed to check login status according to cookie")
+		return fmt.Errorf("failed to check login status according to cookie (errno %d)", resp.Errno)
 	}
-	return err
+	// jsToken is optional for list/download but required for some filemanager ops; warm it up best-effort.
+	_ = d.resetJsToken()
+	return nil
 }
 
 func (d *Terabox) Drop(ctx context.Context) error {
@@ -72,7 +76,13 @@ func (d *Terabox) Link(ctx context.Context, file model.Obj, args model.LinkArgs)
 	if d.DownloadAPI == "crack" {
 		return d.linkCrack(file, args)
 	}
-	return d.linkOfficial(file, args)
+	// official first; fall back to filemetas dlink (bclone Open order is similar).
+	link, err := d.linkOfficial(file, args)
+	if err == nil && link != nil && link.URL != "" {
+		return link, nil
+	}
+	log.Debugf("terabox official link failed, fallback to crack: %v", err)
+	return d.linkCrack(file, args)
 }
 
 func (d *Terabox) MakeDir(ctx context.Context, parentDir model.Obj, dirName string) error {
