@@ -271,6 +271,56 @@ func (d *Terabox) linkHeadersForClient() http.Header {
 	return teraboxLinkHeader(d.Cookie)
 }
 
+
+// resolveFinalDownloadURL follows Terabox dlink redirects with Cookie+UA.
+// Intermediate hosts like d.terabox.com return "need verify" without session;
+// final CDN (d-xx-*.terabox.com) works with UA alone and is safe for Snippet proxy.
+func (d *Terabox) resolveFinalDownloadURL(dlink string) (string, error) {
+	if dlink == "" {
+		return "", fmt.Errorf("empty dlink")
+	}
+	u := dlink
+	for i := 0; i < 5; i++ {
+		res, err := base.NoRedirectClient.R().
+			SetHeader("Cookie", d.Cookie).
+			SetHeader("User-Agent", teraboxUA).
+			SetHeader("Referer", "https://www.terabox.com/").
+			Get(u)
+		if err != nil {
+			return "", err
+		}
+		loc := res.Header().Get("Location")
+		if loc == "" {
+			// Some gateways put redirect target only on 302 with empty Location in edge cases
+			if res.StatusCode() >= 300 && res.StatusCode() < 400 {
+				return "", fmt.Errorf("terabox redirect without Location, status %d", res.StatusCode())
+			}
+			return u, nil
+		}
+		if strings.HasPrefix(loc, "/") {
+			baseU := d.base_url
+			if baseU == "" {
+				baseU = "https://www.terabox.com"
+			}
+			loc = strings.TrimRight(baseU, "/") + loc
+		}
+		u = loc
+		// Final CDN hosts are typically d-<region>-*.terabox.com with size/sign in query
+		host := ""
+		if pu, err := url.Parse(u); err == nil {
+			host = strings.ToLower(pu.Hostname())
+		}
+		if host != "" && host != "d.terabox.com" && host != "www.terabox.com" &&
+			(strings.Contains(host, "terabox.com") || strings.Contains(host, "baidupcs.com")) {
+			// one more hop if still relative-style gateway; else stop when left d.terabox.com
+			if !strings.HasPrefix(host, "d.") || strings.Count(host, ".") >= 2 {
+				return u, nil
+			}
+		}
+	}
+	return u, nil
+}
+
 func (d *Terabox) linkOfficial(file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	var resp DownloadResp
 	signString, err := d.genSign()
@@ -298,19 +348,9 @@ func (d *Terabox) linkOfficial(file model.Obj, args model.LinkArgs) (*model.Link
 	}
 
 	dlink := resp.Dlink[0].Dlink
-	res, err := base.NoRedirectClient.R().
-		SetHeader("Cookie", d.Cookie).
-		SetHeader("User-Agent", teraboxUA).
-		SetHeader("Referer", d.base_url+"/").
-		Get(dlink)
+	u, err := d.resolveFinalDownloadURL(dlink)
 	if err != nil {
 		return nil, err
-	}
-	u := res.Header().Get("Location")
-	if u == "" {
-		u = dlink
-	} else if strings.HasPrefix(u, "/") {
-		u = strings.TrimRight(d.base_url, "/") + u
 	}
 	return &model.Link{
 		URL:    d.wrapSnippetProxy(u),
@@ -335,8 +375,12 @@ func (d *Terabox) linkCrack(file model.Obj, args model.LinkArgs) (*model.Link, e
 	if len(resp.Info) == 0 || resp.Info[0].Dlink == "" {
 		return nil, fmt.Errorf("terabox filemetas empty dlink for path %s", file.GetPath())
 	}
+	u, err := d.resolveFinalDownloadURL(resp.Info[0].Dlink)
+	if err != nil {
+		return nil, err
+	}
 	return &model.Link{
-		URL:    d.wrapSnippetProxy(resp.Info[0].Dlink),
+		URL:    d.wrapSnippetProxy(u),
 		Header: d.linkHeadersForClient(),
 	}, nil
 }
