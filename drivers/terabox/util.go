@@ -256,6 +256,21 @@ func (d *Terabox) wrapSnippetProxy(u string) string {
 	return proxy + "/d/" + base64.RawURLEncoding.EncodeToString([]byte(u))
 }
 
+func (d *Terabox) usingSnippet() bool {
+	return strings.TrimSpace(d.SnippetProxy) != ""
+}
+
+// linkHeadersForClient: when Snippet proxies Terabox, CDN Cookie must NOT be sent to the browser.
+func (d *Terabox) linkHeadersForClient() http.Header {
+	if d.usingSnippet() {
+		h := http.Header{}
+		h.Set("User-Agent", teraboxUA)
+		h.Set("Referer", "https://www.terabox.com/")
+		return h
+	}
+	return teraboxLinkHeader(d.Cookie)
+}
+
 func (d *Terabox) linkOfficial(file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	var resp DownloadResp
 	signString, err := d.genSign()
@@ -299,7 +314,7 @@ func (d *Terabox) linkOfficial(file model.Obj, args model.LinkArgs) (*model.Link
 	}
 	return &model.Link{
 		URL:    d.wrapSnippetProxy(u),
-		Header: teraboxLinkHeader(d.Cookie),
+		Header: d.linkHeadersForClient(),
 	}, nil
 }
 
@@ -322,7 +337,7 @@ func (d *Terabox) linkCrack(file model.Obj, args model.LinkArgs) (*model.Link, e
 	}
 	return &model.Link{
 		URL:    d.wrapSnippetProxy(resp.Info[0].Dlink),
-		Header: teraboxLinkHeader(d.Cookie),
+		Header: d.linkHeadersForClient(),
 	}, nil
 }
 
