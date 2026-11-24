@@ -4,7 +4,6 @@ import (
 	"archive/zip"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	stdpath "path"
 	"strings"
