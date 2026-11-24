@@ -303,6 +303,81 @@ func FsArchiveDecompress(c *gin.Context) {
 	})
 }
 
+
+
+type ArchiveCompressReq struct {
+	SrcPaths    []string `json:"src_paths" form:"src_paths"`
+	SrcDir      string   `json:"src_dir" form:"src_dir"`
+	Names       []string `json:"name" form:"name"`
+	DstDir      string   `json:"dst_dir" form:"dst_dir"`
+	ArchiveName string   `json:"archive_name" form:"archive_name"`
+	Overwrite   bool     `json:"overwrite" form:"overwrite"`
+}
+
+// FsArchiveCompress zips selected paths and uploads the zip to dst_dir on the same or another storage.
+// Example (same OneDrive/SharePoint mount): src under /nvsu/..., dst /nvsu/archives, name backup.zip
+func FsArchiveCompress(c *gin.Context) {
+	var req ArchiveCompressReq
+	if err := c.ShouldBind(&req); err != nil {
+		common.ErrorResp(c, err, 400)
+		return
+	}
+	user := c.Request.Context().Value(conf.UserKey).(*model.User)
+	if !user.CanWriteContent() {
+		common.ErrorResp(c, errs.PermissionDenied, 403)
+		return
+	}
+	srcPaths := make([]string, 0)
+	for _, p := range req.SrcPaths {
+		joined, err := user.JoinPath(p)
+		if err != nil {
+			common.ErrorResp(c, err, 403)
+			return
+		}
+		srcPaths = append(srcPaths, joined)
+	}
+	if len(srcPaths) == 0 && req.SrcDir != "" {
+		for _, name := range req.Names {
+			srcPath, err := user.JoinPath(stdpath.Join(req.SrcDir, name))
+			if err != nil {
+				common.ErrorResp(c, err, 403)
+				return
+			}
+			srcPaths = append(srcPaths, srcPath)
+		}
+	}
+	if len(srcPaths) == 0 {
+		common.ErrorStrResp(c, "no source paths", 400)
+		return
+	}
+	dstDir, err := user.JoinPath(req.DstDir)
+	if err != nil {
+		common.ErrorResp(c, err, 403)
+		return
+	}
+	dstMeta, err := op.GetNearestMeta(dstDir)
+	if err != nil && !errors.Is(errors.Cause(err), errs.MetaNotFound) {
+		common.ErrorResp(c, err, 500, true)
+		return
+	}
+	if !common.CanWrite(user, dstMeta, dstDir) {
+		common.ErrorResp(c, errs.PermissionDenied, 403)
+		return
+	}
+	t, e := fs.ArchiveCompress(c.Request.Context(), srcPaths, dstDir, req.ArchiveName, req.Overwrite)
+	if e != nil {
+		common.ErrorResp(c, e, 500)
+		return
+	}
+	tasks := make([]task.TaskExtensionInfo, 0, 1)
+	if t != nil {
+		tasks = append(tasks, t)
+	}
+	common.SuccessResp(c, gin.H{
+		"task": getTaskInfos(tasks),
+	})
+}
+
 func ArchiveDown(c *gin.Context) {
 	archiveRawPath := c.Request.Context().Value(conf.PathKey).(string)
 	innerPath := utils.FixAndCleanPath(c.Query("inner"))
