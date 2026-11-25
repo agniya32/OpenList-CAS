@@ -371,7 +371,10 @@ func FsArchiveCompress(c *gin.Context) {
 	}
 	tasks := make([]task.TaskExtensionInfo, 0)
 	if req.PerItem {
-		// One zip per selected object; name derived from file/folder name.
+		// Expand selection into one zip per target object.
+		// - multiple selected paths: each path → one zip
+		// - single directory: each *immediate child* → one zip (batch subfolders)
+		expandPaths := make([]string, 0)
 		for _, srcPath := range srcPaths {
 			storage, actual, err := op.GetStorageAndActualPath(srcPath)
 			if err != nil {
@@ -383,13 +386,35 @@ func FsArchiveCompress(c *gin.Context) {
 				common.ErrorResp(c, err, 500)
 				return
 			}
-			base := obj.GetName()
-			var archiveName string
-			if obj.IsDir() {
-				archiveName = base + ".zip"
+			if len(srcPaths) == 1 && obj.IsDir() {
+				children, err := op.List(c.Request.Context(), storage, actual, model.ListArgs{})
+				if err != nil {
+					common.ErrorResp(c, err, 500)
+					return
+				}
+				for _, ch := range children {
+					expandPaths = append(expandPaths, stdpath.Join(srcPath, ch.GetName()))
+				}
 			} else {
-				archiveName = base + ".zip"
+				expandPaths = append(expandPaths, srcPath)
 			}
+		}
+		if len(expandPaths) == 0 {
+			common.ErrorStrResp(c, "no files or folders to compress under selection", 400)
+			return
+		}
+		for _, srcPath := range expandPaths {
+			storage, actual, err := op.GetStorageAndActualPath(srcPath)
+			if err != nil {
+				common.ErrorResp(c, err, 500)
+				return
+			}
+			obj, err := op.Get(c.Request.Context(), storage, actual)
+			if err != nil {
+				common.ErrorResp(c, err, 500)
+				return
+			}
+			archiveName := obj.GetName() + ".zip"
 			t, e := fs.ArchiveCompress(c.Request.Context(), []string{srcPath}, dstDir, archiveName, req.Overwrite)
 			if e != nil {
 				common.ErrorResp(c, e, 500)
