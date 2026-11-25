@@ -8,7 +8,7 @@ import {
 } from "@hope-ui/solid"
 import { useFetch, usePath, useRouter, useT } from "~/hooks"
 import { bus, fsArchiveCompress, handleRespWithNotifySuccess } from "~/utils"
-import { batch, createSignal, onCleanup } from "solid-js"
+import { batch, createSignal, onCleanup, Show } from "solid-js"
 import { ModalFolderChoose } from "~/components"
 import { selectedObjs } from "~/store"
 import { CreateFolderButton } from "./CopyMove"
@@ -20,6 +20,7 @@ export const Compress = () => {
   const { pathname } = useRouter()
   const { refresh } = usePath()
   const [overwrite, setOverwrite] = createSignal(false)
+  const [perItem, setPerItem] = createSignal(true)
   const [srcPath, setSrcPath] = createSignal("")
   const [srcName, setSrcName] = createSignal<string[]>([])
   const [archiveName, setArchiveName] = createSignal("archive.zip")
@@ -28,6 +29,7 @@ export const Compress = () => {
     const objs = selectedObjs()
     if (!objs.length) return
     const path = pathname()
+    const multi = objs.length > 1
     const base =
       objs.length === 1
         ? objs[0].name.replace(/\.[^.]+$/, "") + ".zip"
@@ -37,6 +39,8 @@ export const Compress = () => {
       setSrcName(objs.map((o) => o.name))
       setArchiveName(base.endsWith(".zip") ? base : base + ".zip")
       setOverwrite(false)
+      // default: each selected folder/file -> own zip when multi-select
+      setPerItem(multi || objs.some((o) => o.is_dir))
     })
     onOpen()
   }
@@ -52,17 +56,25 @@ export const Compress = () => {
       headerSlot={(handler) => <CreateFolderButton handler={handler} />}
       footerSlot={
         <VStack w="$full" spacing="$2" alignItems="flex-start">
-          <HStack width="100%" spacing="$1">
-            <Text size="sm" css={{ whiteSpace: "nowrap" }}>
-              {t("home.toolbar.compress-name")}
-            </Text>
-            <Input
-              value={archiveName()}
-              onInput={(e: any) => setArchiveName(e.target.value as string)}
-              size="sm"
-              flexGrow="1"
-            />
-          </HStack>
+          <Show when={!perItem()}>
+            <HStack width="100%" spacing="$1">
+              <Text size="sm" css={{ whiteSpace: "nowrap" }}>
+                {t("home.toolbar.compress-name")}
+              </Text>
+              <Input
+                value={archiveName()}
+                onInput={(e: any) => setArchiveName(e.target.value as string)}
+                size="sm"
+                flexGrow="1"
+              />
+            </HStack>
+          </Show>
+          <Checkbox
+            checked={perItem()}
+            onChange={() => setPerItem(!perItem())}
+          >
+            {t("home.toolbar.compress-per-item")}
+          </Checkbox>
           <Checkbox
             checked={overwrite()}
             onChange={() => setOverwrite(!overwrite())}
@@ -77,7 +89,7 @@ export const Compress = () => {
         const paths = srcName().map((n) =>
           srcPath() === "/" ? `/${n}` : `${srcPath()}/${n}`,
         )
-        const resp = await ok(paths, dst, name, overwrite())
+        const resp = await ok(paths, dst, name, overwrite(), perItem())
         handleRespWithNotifySuccess(resp, () => {
           refresh()
           onClose()
