@@ -153,7 +153,7 @@ insert_at = idx + end + 2
 addition = '''
       {
         title: "manage.sidemenu.compress",
-        icon: TbPackage,
+        icon: TbArchive,
         to: "/@manage/tasks/compress",
         role: UserRole.GENERAL,
         component: lazy(() => import("./tasks/Compress")),
