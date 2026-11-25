@@ -21,12 +21,14 @@ export const fsArchiveCompress = (
   dst_dir: string,
   archive_name: string,
   overwrite = false,
+  per_item = false,
 ): PEmptyResp => {
   return r.post("/fs/archive/compress", {
     src_paths,
     dst_dir,
     archive_name,
     overwrite,
+    per_item,
   })
 }
 EOT
@@ -128,6 +130,7 @@ d = json.loads(p.read_text(encoding="utf-8-sig"))
 tb = d.setdefault("toolbar", {})
 tb["compress"] = "Compress"
 tb["compress-name"] = "Archive name:"
+tb["compress-per-item"] = "Zip each selected file/folder separately"
 p.write_text(json.dumps(d, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 PY
 fi
