@@ -3,9 +3,13 @@ set -euo pipefail
 ROOT="${1:?frontend root required}"
 OVERLAY_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "[overlay] Compress.tsx"
+echo "[overlay] home Compress.tsx"
 mkdir -p "$ROOT/src/pages/home/toolbar"
 cp -f "$OVERLAY_DIR/src/pages/home/toolbar/Compress.tsx" "$ROOT/src/pages/home/toolbar/Compress.tsx"
+
+echo "[overlay] manage tasks Compress.tsx"
+mkdir -p "$ROOT/src/pages/manage/tasks"
+cp -f "$OVERLAY_DIR/src/pages/manage/tasks/Compress.tsx" "$ROOT/src/pages/manage/tasks/Compress.tsx"
 
 API="$ROOT/src/utils/api.ts"
 if ! grep -q 'fsArchiveCompress' "$API"; then
@@ -34,42 +38,23 @@ from pathlib import Path
 import sys
 p = Path(sys.argv[1])
 t = p.read_text()
-if "  compress:" not in t:
-    if "TbPackage" not in t:
-        t = t.replace(
-            'from "solid-icons/tb"',
-            'from "solid-icons/tb"',
-            1,
-        )
-        # add import line after last solid-icons/tb import block
-        lines = t.splitlines(True)
-        out = []
-        added_imp = False
-        for i, line in enumerate(lines):
-            out.append(line)
-            if (not added_imp) and 'from "solid-icons/tb"' in line and "TbPackage" not in line:
-                if "TbArchive" in line:
-                    out[-1] = line.replace("TbArchive, TbFileArrowRight", "TbArchive, TbFileArrowRight, TbPackage")
-                    if "TbPackage" not in out[-1]:
-                        out[-1] = line.rstrip("\n") + ""
-                        # fallback separate import
-                        out.append('import { TbPackage } from "solid-icons/tb"\n')
-                    added_imp = True
-                else:
-                    out.append('import { TbPackage } from "solid-icons/tb"\n')
-                    added_imp = True
-        t = "".join(out)
-        if "TbPackage" not in t:
-            t = 'import { TbPackage } from "solid-icons/tb"\n' + t
-    t = t.replace(
-        'decompress: { icon: TbArchive, color: "$neutral9" },',
-        'decompress: { icon: TbArchive, color: "$neutral9" },\n  compress: { icon: TbPackage, color: "$primary9" },',
-        1,
-    )
-    p.write_text(t)
-    print("[overlay] operations.ts")
-else:
+if "  compress:" in t:
     print("[overlay] operations.ts already")
+    raise SystemExit(0)
+if "TbPackage" not in t:
+    t = t.replace(
+        "import { TbArchive, TbFileArrowRight } from \"solid-icons/tb\"",
+        "import { TbArchive, TbFileArrowRight, TbPackage } from \"solid-icons/tb\"",
+    )
+    if "TbPackage" not in t:
+        t = 'import { TbPackage } from "solid-icons/tb"\n' + t
+t = t.replace(
+    'decompress: { icon: TbArchive, color: "$neutral9" },',
+    'decompress: { icon: TbArchive, color: "$neutral9" },\n  compress: { icon: TbPackage, color: "$primary9" },',
+    1,
+)
+p.write_text(t)
+print("[overlay] operations.ts")
 PY
 
 TB="$ROOT/src/pages/home/toolbar/Toolbar.tsx"
@@ -146,5 +131,63 @@ tb["compress-name"] = "Archive name:"
 p.write_text(json.dumps(d, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 PY
 fi
+
+SM="$ROOT/src/pages/manage/sidemenu_items.tsx"
+if ! grep -q 'tasks/compress' "$SM"; then
+  echo "[overlay] sidemenu_items.tsx"
+  python3 - "$SM" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+text = path.read_text()
+marker = 'component: lazy(() => import("./tasks/Decompress")),'
+idx = text.find(marker)
+if idx < 0:
+    raise SystemExit("Decompress sidemenu component not found")
+# end of this object after marker
+sub = text[idx:]
+end = sub.find("},")
+if end < 0:
+    raise SystemExit("end of decompress entry not found")
+insert_at = idx + end + 2
+addition = '''
+      {
+        title: "manage.sidemenu.compress",
+        icon: TbPackage,
+        to: "/@manage/tasks/compress",
+        role: UserRole.GENERAL,
+        component: lazy(() => import("./tasks/Compress")),
+      },'''
+text = text[:insert_at] + addition + text[insert_at:]
+if "TbPackage" not in text:
+    text = text.replace(
+        'import { TbArchive, TbHash, TbSeeding } from "solid-icons/tb"',
+        'import { TbArchive, TbHash, TbPackage, TbSeeding } from "solid-icons/tb"',
+    )
+    if "TbPackage" not in text:
+        text = 'import { TbPackage } from "solid-icons/tb"\n' + text
+path.write_text(text)
+print("sidemenu ok")
+PY
+fi
+
+# manage.json keys (en always present; zh after i18n unpack)
+for loc in en zh-CN zh-TW; do
+  MJ="$ROOT/src/lang/$loc/manage.json"
+  if [ -f "$MJ" ]; then
+    python3 - "$MJ" "$loc" <<'PY'
+from pathlib import Path
+import json, sys
+p = Path(sys.argv[1])
+loc = sys.argv[2]
+labels = {"en": "Compress", "zh-CN": "压缩", "zh-TW": "壓縮"}
+d = json.loads(p.read_text(encoding="utf-8-sig"))
+sm = d.setdefault("sidemenu", {})
+sm.setdefault("compress", labels.get(loc, "Compress"))
+p.write_text(json.dumps(d, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+print("manage.json", loc)
+PY
+  fi
+done
 
 echo "[overlay] done"
