@@ -100,19 +100,49 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Setup web (official frontend + compress overlay)
+      - name: Setup web (official frontend + i18n + compress overlay)
         run: |
           set -euo pipefail
           FE_REPO="${FRONTEND_REPO:-OpenListTeam/OpenList-Frontend}"
           git clone --depth 1 "https://github.com/${FE_REPO}.git" /tmp/openlist-frontend
+          # Official repo only ships English sources; full locales are on edge/i18n.tar.gz
+          curl -fsSL -H "Authorization: Bearer ${GITHUB_TOKEN}" -o /tmp/i18n.tar.gz             "https://github.com/${FE_REPO}/releases/download/edge/i18n.tar.gz"
+          tar -xzf /tmp/i18n.tar.gz -C /tmp/openlist-frontend/src/lang
+          ls /tmp/openlist-frontend/src/lang | head
+          # Ensure zh-CN has compress strings (fallback to English keys if missing)
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          for loc, compress, name in [
+              ("zh-CN", "压缩", "压缩包名称："),
+              ("zh-TW", "壓縮", "壓縮檔名稱："),
+              ("en", "Compress", "Archive name:"),
+          ]:
+              p = Path(f"/tmp/openlist-frontend/src/lang/{loc}/home.json")
+              if not p.exists():
+                  continue
+              d = json.loads(p.read_text(encoding="utf-8-sig"))
+              tb = d.setdefault("toolbar", {})
+              tb.setdefault("compress", compress)
+              tb.setdefault("compress-name", name)
+              p.write_text(json.dumps(d, ensure_ascii=False, indent=2) + "
+", encoding="utf-8")
+          print("i18n compress keys ok")
+          PY
           bash frontend-overlay/apply-frontend-overlay.sh /tmp/openlist-frontend
           cd /tmp/openlist-frontend
           corepack enable
           pnpm install --frozen-lockfile || pnpm install
+          # rebuild entry after i18n lands
+          node ./scripts/i18n.mjs || true
           pnpm run build
           rm -rf "${GITHUB_WORKSPACE}/public/dist"
           mkdir -p "${GITHUB_WORKSPACE}/public/dist"
           cp -a dist/. "${GITHUB_WORKSPACE}/public/dist/"
+          # sanity: zh-CN chunk or locale presence
+          if ! grep -R -l "登录\|Login" "${GITHUB_WORKSPACE}/public/dist" >/dev/null 2>&1; then
+            echo "warn: could not verify locale strings in dist"
+          fi
           echo "WebVersion=rolling-compress" >> "$GITHUB_ENV"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
