@@ -159,13 +159,34 @@ addition = '''
         component: lazy(() => import("./tasks/Compress")),
       },'''
 text = text[:insert_at] + addition + text[insert_at:]
-if "TbPackage" not in text:
-    text = text.replace(
-        'import { TbArchive, TbHash, TbSeeding } from "solid-icons/tb"',
-        'import { TbArchive, TbHash, TbPackage, TbSeeding } from "solid-icons/tb"',
-    )
-    if "TbPackage" not in text:
-        text = 'import { TbPackage } from "solid-icons/tb"\n' + text
+# Ensure import even when TbPackage already appears as icon: TbPackage
+import_old = 'import { TbArchive, TbHash, TbSeeding } from "solid-icons/tb"'
+import_new = 'import { TbArchive, TbHash, TbPackage, TbSeeding } from "solid-icons/tb"'
+if import_new not in text:
+    if import_old in text:
+        text = text.replace(import_old, import_new, 1)
+    else:
+        lines = text.splitlines(True)
+        out = []
+        done = False
+        for ln in lines:
+            if (
+                not done
+                and ln.strip().startswith("import")
+                and 'from "solid-icons/tb"' in ln
+                and "TbPackage" not in ln
+            ):
+                if "TbArchive" in ln:
+                    ln = ln.replace("TbArchive,", "TbArchive, TbPackage,")
+                    if "TbPackage" not in ln:
+                        ln = ln.replace("{", "{ TbPackage,", 1)
+                else:
+                    ln = ln.replace("{", "{ TbPackage,", 1)
+                done = True
+            out.append(ln)
+        text = "".join(out)
+        if not done:
+            text = 'import { TbPackage } from "solid-icons/tb"\n' + text
 path.write_text(text)
 print("sidemenu ok")
 PY
