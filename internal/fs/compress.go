@@ -7,6 +7,7 @@ import (
 	"os"
 	stdpath "path"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/conf"
@@ -14,6 +15,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/internal/setting"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/internal/task"
 	"github.com/OpenListTeam/OpenList/v4/internal/task_group"
@@ -76,6 +78,10 @@ func (t *CompressUploadTask) Run() error {
 		}
 	}
 
+	t.status = "checking disk space"
+	if err := ensureTempSpace(t.Ctx(), t.SrcPaths); err != nil {
+		return err
+	}
 	tmp, err := os.CreateTemp(conf.Conf.TempDir, "compress-*.zip")
 	if err != nil {
 		return err
@@ -115,6 +121,98 @@ func (t *CompressUploadTask) Run() error {
 	err = op.Put(context.WithValue(t.Ctx(), conf.SkipHookKey, struct{}{}), dstStorage, dstDirActual, fs, t.SetProgress)
 	task_group.TransferCoordinator.Done(context.WithoutCancel(t.Ctx()), groupID, err == nil)
 	return err
+}
+
+
+func freeDiskBytes(path string) (uint64, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return 0, err
+	}
+	return st.Bavail * uint64(st.Bsize), nil
+}
+
+// roughSize walks selected paths and sums file sizes (dirs recursive).
+func roughRemoteSize(ctx context.Context, paths []string) (int64, error) {
+	var total int64
+	var walk func(storage driver.Driver, actual string, isDir bool) error
+	walk = func(storage driver.Driver, actual string, isDir bool) error {
+		if utils.IsCanceled(ctx) {
+			return ctx.Err()
+		}
+		if !isDir {
+			obj, err := op.Get(ctx, storage, actual)
+			if err != nil {
+				return err
+			}
+			total += obj.GetSize()
+			return nil
+		}
+		objs, err := op.List(ctx, storage, actual, model.ListArgs{})
+		if err != nil {
+			return err
+		}
+		for _, o := range objs {
+			child := stdpath.Join(actual, o.GetName())
+			if err := walk(storage, child, o.IsDir()); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, p := range paths {
+		p = utils.FixAndCleanPath(p)
+		storage, actual, err := op.GetStorageAndActualPath(p)
+		if err != nil {
+			return 0, err
+		}
+	obj, err := op.Get(ctx, storage, actual)
+		if err != nil {
+			return 0, err
+		}
+		if err := walk(storage, actual, obj.IsDir()); err != nil {
+			return 0, err
+		}
+	}
+	return total, nil
+}
+
+func ensureTempSpace(ctx context.Context, srcPaths []string) error {
+	tmpRoot := conf.Conf.TempDir
+	if tmpRoot == "" {
+		tmpRoot = os.TempDir()
+	}
+	free, err := freeDiskBytes(tmpRoot)
+	if err != nil {
+		// non-fatal if statfs fails on exotic FS
+		return nil
+	}
+	minGB := setting.GetInt(conf.CompressMinFreeGB, 5)
+	if minGB < 0 {
+		minGB = 0
+	}
+	minFree := uint64(minGB) * 1024 * 1024 * 1024
+	est, err := roughRemoteSize(ctx, srcPaths)
+	if err != nil {
+		// if size probe fails, still enforce min free floor
+		est = 0
+	}
+	// zip temp ≈ source size (deflate often smaller; use 1.05x + 256MB headroom)
+	need := uint64(float64(est)*1.05) + 256*1024*1024
+	if need < minFree {
+		need = minFree
+	}
+	if free < need {
+		return errors.Errorf(
+			"temp disk free space insufficient: free=%.2fGB need≈%.2fGB (min_free=%dGB, estimated_src=%.2fGB, temp=%s). Reduce compress_task_threads_num or free disk / change temp_dir",
+			float64(free)/float64(1<<30),
+			float64(need)/float64(1<<30),
+			minGB,
+			float64(est)/float64(1<<30),
+			tmpRoot,
+		)
+	}
+	return nil
 }
 
 func (t *CompressUploadTask) buildZip(ctx context.Context, zipPath string) error {
