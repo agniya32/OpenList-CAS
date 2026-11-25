@@ -312,6 +312,11 @@ type ArchiveCompressReq struct {
 	DstDir      string   `json:"dst_dir" form:"dst_dir"`
 	ArchiveName string   `json:"archive_name" form:"archive_name"`
 	Overwrite   bool     `json:"overwrite" form:"overwrite"`
+	// PerItem: each selected path becomes its own zip.
+	// Directory "foo" -> foo.zip (recursive files under foo/);
+	// File "bar.mp4" -> bar.mp4.zip.
+	// When false (default), all paths are packed into one ArchiveName zip.
+	PerItem bool `json:"per_item" form:"per_item"`
 }
 
 // FsArchiveCompress zips selected paths and uploads the zip to dst_dir on the same or another storage.
@@ -364,14 +369,45 @@ func FsArchiveCompress(c *gin.Context) {
 		common.ErrorResp(c, errs.PermissionDenied, 403)
 		return
 	}
-	t, e := fs.ArchiveCompress(c.Request.Context(), srcPaths, dstDir, req.ArchiveName, req.Overwrite)
-	if e != nil {
-		common.ErrorResp(c, e, 500)
-		return
-	}
-	tasks := make([]task.TaskExtensionInfo, 0, 1)
-	if t != nil {
-		tasks = append(tasks, t)
+	tasks := make([]task.TaskExtensionInfo, 0)
+	if req.PerItem {
+		// One zip per selected object; name derived from file/folder name.
+		for _, srcPath := range srcPaths {
+			storage, actual, err := op.GetStorageAndActualPath(srcPath)
+			if err != nil {
+				common.ErrorResp(c, err, 500)
+				return
+			}
+			obj, err := op.Get(c.Request.Context(), storage, actual)
+			if err != nil {
+				common.ErrorResp(c, err, 500)
+				return
+			}
+			base := obj.GetName()
+			var archiveName string
+			if obj.IsDir() {
+				archiveName = base + ".zip"
+			} else {
+				archiveName = base + ".zip"
+			}
+			t, e := fs.ArchiveCompress(c.Request.Context(), []string{srcPath}, dstDir, archiveName, req.Overwrite)
+			if e != nil {
+				common.ErrorResp(c, e, 500)
+				return
+			}
+			if t != nil {
+				tasks = append(tasks, t)
+			}
+		}
+	} else {
+		t, e := fs.ArchiveCompress(c.Request.Context(), srcPaths, dstDir, req.ArchiveName, req.Overwrite)
+		if e != nil {
+			common.ErrorResp(c, e, 500)
+			return
+		}
+		if t != nil {
+			tasks = append(tasks, t)
+		}
 	}
 	common.SuccessResp(c, gin.H{
 		"task": getTaskInfos(tasks),
