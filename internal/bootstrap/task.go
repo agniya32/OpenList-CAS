@@ -49,9 +49,9 @@ func InitTaskManager() {
 	op.RegisterSettingChangingCallback(func() {
 		fs.ArchiveContentUploadTaskManager.SetWorkersNumActive(taskFilterNegative(setting.GetInt(conf.TaskDecompressUploadThreadsNum, conf.Conf.Tasks.DecompressUpload.Workers)))
 	})
-	fs.CompressUploadTaskManager = tache.NewManager[*fs.CompressUploadTask](tache.WithWorks(setting.GetInt(conf.TaskUploadThreadsNum, conf.Conf.Tasks.Upload.Workers)), tache.WithMaxRetry(conf.Conf.Tasks.Upload.MaxRetry))
+	fs.CompressUploadTaskManager = tache.NewManager[*fs.CompressUploadTask](tache.WithWorks(setting.GetInt(conf.TaskCompressThreadsNum, conf.Conf.Tasks.Compress.Workers)), tache.WithMaxRetry(conf.Conf.Tasks.Compress.MaxRetry))
 	op.RegisterSettingChangingCallback(func() {
-		fs.CompressUploadTaskManager.SetWorkersNumActive(taskFilterNegative(setting.GetInt(conf.TaskUploadThreadsNum, conf.Conf.Tasks.Upload.Workers)))
+		fs.CompressUploadTaskManager.SetWorkersNumActive(taskFilterNegative(setting.GetInt(conf.TaskCompressThreadsNum, conf.Conf.Tasks.Compress.Workers)))
 	})
 	fs.SeedGenerateTaskManager = tache.NewManager[*fs.SeedGenerateTask](tache.WithWorks(setting.GetInt(conf.TaskUploadThreadsNum, conf.Conf.Tasks.Upload.Workers)), tache.WithMaxRetry(conf.Conf.Tasks.Upload.MaxRetry)) //seed generation will not support persist
 	// 种子秒传/中转保存的任务只用于展示进度：操作仍在请求内同步执行，
