@@ -1,28 +1,46 @@
 #!/usr/bin/env python3
-"""Ensure compress toolbar strings exist in frontend locale home.json files."""
+"""Ensure compress strings exist in frontend locale files."""
 import json
 import sys
 from pathlib import Path
 
-DEFAULTS = {
+HOME = {
     "zh-CN": ("压缩", "压缩包名称："),
     "zh-TW": ("壓縮", "壓縮檔名稱："),
     "en": ("Compress", "Archive name:"),
 }
+MANAGE = {
+    "zh-CN": "压缩",
+    "zh-TW": "壓縮",
+    "en": "Compress",
+}
+
+
+def patch_json(path: Path, updater) -> None:
+    if not path.exists():
+        return
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
+    updater(data)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"patched {path}")
 
 
 def main(lang_root: str) -> None:
     root = Path(lang_root)
-    for loc, (compress, name) in DEFAULTS.items():
-        p = root / loc / "home.json"
-        if not p.exists():
-            continue
-        data = json.loads(p.read_text(encoding="utf-8-sig"))
-        tb = data.setdefault("toolbar", {})
-        tb.setdefault("compress", compress)
-        tb.setdefault("compress-name", name)
-        p.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        print(f"patched {p}")
+    for loc, (compress, name) in HOME.items():
+        def upd_home(d, c=compress, n=name):
+            tb = d.setdefault("toolbar", {})
+            tb.setdefault("compress", c)
+            tb.setdefault("compress-name", n)
+
+        patch_json(root / loc / "home.json", upd_home)
+
+    for loc, label in MANAGE.items():
+        def upd_manage(d, lab=label):
+            sm = d.setdefault("sidemenu", {})
+            sm.setdefault("compress", lab)
+
+        patch_json(root / loc / "manage.json", upd_manage)
 
 
 if __name__ == "__main__":
