@@ -5,9 +5,21 @@ import sys
 from pathlib import Path
 
 HOME = {
-    "zh-CN": ("压缩", "压缩包名称："),
-    "zh-TW": ("壓縮", "壓縮檔名稱："),
-    "en": ("Compress", "Archive name:"),
+    "zh-CN": {
+        "compress": "压缩",
+        "compress-name": "压缩包名称：",
+        "compress-per-item": "每个选中的文件/文件夹单独打成 zip",
+    },
+    "zh-TW": {
+        "compress": "壓縮",
+        "compress-name": "壓縮檔名稱：",
+        "compress-per-item": "每個選取的檔案/資料夾單獨壓成 zip",
+    },
+    "en": {
+        "compress": "Compress",
+        "compress-name": "Archive name:",
+        "compress-per-item": "Zip each selected file/folder separately",
+    },
 }
 MANAGE = {
     "zh-CN": "压缩",
@@ -27,11 +39,11 @@ def patch_json(path: Path, updater) -> None:
 
 def main(lang_root: str) -> None:
     root = Path(lang_root)
-    for loc, (compress, name) in HOME.items():
-        def upd_home(d, c=compress, n=name):
+    for loc, keys in HOME.items():
+        def upd_home(d, k=keys):
             tb = d.setdefault("toolbar", {})
-            tb.setdefault("compress", c)
-            tb.setdefault("compress-name", n)
+            for key, val in k.items():
+                tb.setdefault(key, val)
 
         patch_json(root / loc / "home.json", upd_home)
 
