@@ -29,16 +29,48 @@ EOT
 fi
 
 OPS="$ROOT/src/pages/home/toolbar/operations.ts"
-if ! grep -q 'compress:' "$OPS"; then
-  echo "[overlay] operations.ts"
-  if ! grep -q 'TbPackage' "$OPS"; then
-    sed -i 's/TbArchive, TbFileArrowRight/TbArchive, TbFileArrowRight, TbPackage/' "$OPS" || true
-    if ! grep -q 'TbPackage' "$OPS"; then
-      sed -i '1a import { TbPackage } from "solid-icons/tb"' "$OPS"
-    fi
-  fi
-  sed -i '/decompress: { icon: TbArchive/a\  compress: { icon: TbPackage, color: "$primary9" },' "$OPS"
-fi
+python3 - "$OPS" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+t = p.read_text()
+if "compress:" not in t:
+    if "TbPackage" not in t:
+        t = t.replace(
+            'from "solid-icons/tb"',
+            'from "solid-icons/tb"',
+            1,
+        )
+        # add import line after last solid-icons/tb import block
+        lines = t.splitlines(True)
+        out = []
+        added_imp = False
+        for i, line in enumerate(lines):
+            out.append(line)
+            if (not added_imp) and 'from "solid-icons/tb"' in line and "TbPackage" not in line:
+                if "TbArchive" in line:
+                    out[-1] = line.replace("TbArchive, TbFileArrowRight", "TbArchive, TbFileArrowRight, TbPackage")
+                    if "TbPackage" not in out[-1]:
+                        out[-1] = line.rstrip("\n") + ""
+                        # fallback separate import
+                        out.append('import { TbPackage } from "solid-icons/tb"\n')
+                    added_imp = True
+                else:
+                    out.append('import { TbPackage } from "solid-icons/tb"\n')
+                    added_imp = True
+        t = "".join(out)
+        if "TbPackage" not in t:
+            t = 'import { TbPackage } from "solid-icons/tb"\n' + t
+    t = t.replace(
+        'decompress: { icon: TbArchive, color: "$neutral9" },',
+        'decompress: { icon: TbArchive, color: "$neutral9" },\n  compress: { icon: TbPackage, color: "$primary9" },',
+        1,
+    )
+    p.write_text(t)
+    print("[overlay] operations.ts")
+else:
+    print("[overlay] operations.ts already")
+PY
 
 TB="$ROOT/src/pages/home/toolbar/Toolbar.tsx"
 if ! grep -q 'Compress' "$TB"; then
@@ -94,6 +126,12 @@ print("context-menu ok")
 PY
 fi
 
+CENTER="$ROOT/src/pages/home/toolbar/Center.tsx"
+if [ -f "$CENTER" ] && ! grep -q '"compress"' "$CENTER"; then
+  echo "[overlay] Center.tsx"
+  sed -i 's/\["rename", "move", "copy", "delete", "decompress"\]/["rename", "move", "copy", "delete", "decompress", "compress"]/' "$CENTER"
+fi
+
 EN="$ROOT/src/lang/en/home.json"
 if [ -f "$EN" ] && ! grep -q '"compress"' "$EN"; then
   echo "[overlay] en/home.json"
@@ -107,13 +145,6 @@ tb["compress"] = "Compress"
 tb["compress-name"] = "Archive name:"
 p.write_text(json.dumps(d, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 PY
-fi
-
-
-CENTER="$ROOT/src/pages/home/toolbar/Center.tsx"
-if [ -f "$CENTER" ] && ! grep -q '"compress"' "$CENTER"; then
-  echo "[overlay] Center.tsx"
-  sed -i 's/\["rename", "move", "copy", "delete", "decompress"\]/["rename", "move", "copy", "delete", "decompress", "compress"]/' "$CENTER"
 fi
 
 echo "[overlay] done"
