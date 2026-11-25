@@ -95,8 +95,25 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
           df -h
 
-      - name: Setup web
-        run: bash build.sh dev web
+      - name: Setup Node for frontend overlay
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup web (official frontend + compress overlay)
+        run: |
+          set -euo pipefail
+          FE_REPO="${FRONTEND_REPO:-OpenListTeam/OpenList-Frontend}"
+          git clone --depth 1 "https://github.com/${FE_REPO}.git" /tmp/openlist-frontend
+          bash frontend-overlay/apply-frontend-overlay.sh /tmp/openlist-frontend
+          cd /tmp/openlist-frontend
+          corepack enable
+          pnpm install --frozen-lockfile || pnpm install
+          pnpm run build
+          rm -rf "${GITHUB_WORKSPACE}/public/dist"
+          mkdir -p "${GITHUB_WORKSPACE}/public/dist"
+          cp -a dist/. "${GITHUB_WORKSPACE}/public/dist/"
+          echo "WebVersion=rolling-compress" >> "$GITHUB_ENV"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
