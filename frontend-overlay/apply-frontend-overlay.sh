@@ -34,7 +34,7 @@ from pathlib import Path
 import sys
 p = Path(sys.argv[1])
 t = p.read_text()
-if "compress:" not in t:
+if "  compress:" not in t:
     if "TbPackage" not in t:
         t = t.replace(
             'from "solid-icons/tb"',
