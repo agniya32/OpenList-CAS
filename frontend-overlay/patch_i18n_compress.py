@@ -9,16 +9,19 @@ HOME = {
         "compress": "压缩",
         "compress-name": "压缩包名称：",
         "compress-per-item": "每个选中的文件/文件夹单独打成 zip",
+        "compress-per-child": "将该文件夹下每个子项单独打成 zip",
     },
     "zh-TW": {
         "compress": "壓縮",
         "compress-name": "壓縮檔名稱：",
         "compress-per-item": "每個選取的檔案/資料夾單獨壓成 zip",
+        "compress-per-child": "將該資料夾下每個子項單獨壓成 zip",
     },
     "en": {
         "compress": "Compress",
         "compress-name": "Archive name:",
         "compress-per-item": "Zip each selected file/folder separately",
+        "compress-per-child": "Zip each immediate child under this folder",
     },
 }
 MANAGE = {
